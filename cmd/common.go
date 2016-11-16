@@ -78,8 +78,12 @@ func printFreeDiskSpace() {
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Println(colorstring.Red(" [!] Failed to get current working directory, error:"), err)
+		return
 	}
-	syscall.Statfs(wd, &stat)
+	if err := syscall.Statfs(wd, &stat); err != nil {
+		log.Println(colorstring.Red(" [!] Failed to get file system stats, error:"), err)
+		return
+	}
 	availableSpaceInBytes := stat.Bavail * uint64(stat.Bsize)
 	const KB = uint64(1024)
 	log.Println(" -> (i) Free disk space: ", availableSpaceInBytes/KB/KB/KB, "GB")
