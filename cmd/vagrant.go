@@ -122,7 +122,7 @@ end
 
 	printFreeDiskSpace()
 	log.Println(colorstring.Green(" => Snapshot created! [OK]"))
-	fmt.Println(" NOTE: you can restore this saved snapshot state of the virtual machine with:")
+	fmt.Println(colorstring.Yellow(" NOTE: you can restore this saved snapshot state of the virtual machine with:"))
 	fmt.Println(" $ vagrant snapshot restore " + vagrantInitialSnapshotID)
 	fmt.Println()
 
