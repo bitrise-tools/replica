@@ -10,6 +10,7 @@ import (
 	"github.com/bitrise-io/go-utils/colorstring"
 	"github.com/bitrise-io/go-utils/fileutil"
 	"github.com/bitrise-io/go-utils/pathutil"
+	"github.com/bitrise-io/goinp/goinp"
 	"github.com/spf13/cobra"
 )
 
@@ -79,7 +80,7 @@ func createAndProvisionVagrantVM(destinationDirPath string, isShouldSkipBoxReg b
 	fmt.Println()
 	log.Println(colorstring.Green(" => Creating and booting vagrant VM at path:"), destinationDirPath)
 
-	if err := createVagrantVM(destinationDirPath); err != nil {
+	if err := createVagrantVM(destinationDirPath, true); err != nil {
 		return fmt.Errorf("Failed to create Vagrant VM, error: %s", err)
 	}
 
@@ -99,7 +100,76 @@ func createAndProvisionVagrantVM(destinationDirPath string, isShouldSkipBoxReg b
 	fmt.Println(" $ vagrant snapshot restore " + vagrantInitialSnapshotID)
 	fmt.Println()
 
+	fmt.Println()
+	log.Println(colorstring.Green(" => Sync Xcode.app ..."))
+
+	xcodeAppPath, err := goinp.AskForStringWithDefault(
+		"Please specify an Xcode.app (path) to be synced into the virtual machine",
+		"/Applications/Xcode.app")
+	if err != nil {
+		return fmt.Errorf("failed to get Xcode.app path, error: %s", err)
+	}
+
+	if err := uploadDir(destinationDirPath, xcodeAppPath, "/Applications/Xcode.app"); err != nil {
+		return fmt.Errorf("failed to sync Xcode.app, error: %s", err)
+	}
+
+	printFreeDiskSpace()
+	log.Println(colorstring.Green(" => Xcode.app sync DONE! [OK]"))
+	fmt.Println()
+
 	return nil
+}
+
+func uploadDir(vagrantVMDir, dirToUpload, targetPathInVM string) error {
+	vagrantSSHConfigFilePth, err := saveVagrantSSHConfigIntoTmpFile(vagrantVMDir)
+	if err != nil {
+		return fmt.Errorf("failed to determin vagrant ssh configs, error: %s", err)
+	}
+
+	{
+		cmd := cmdex.NewCommandWithStandardOuts("rsync",
+			"-avhP",
+			"-e", "ssh -F "+vagrantSSHConfigFilePth,
+			filepath.Clean(dirToUpload)+"/", "default:"+filepath.Clean(targetPathInVM)+"/",
+		).SetDir(vagrantVMDir)
+
+		fmt.Println()
+		log.Printf("$ %s", cmd.PrintableCommandArgs())
+		fmt.Println()
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("Failed to run command, error: %s", err)
+		}
+	}
+
+	return nil
+}
+
+func saveVagrantSSHConfigIntoTmpFile(vagrantVMDir string) (string, error) {
+	tmpDirPth, err := pathutil.NormalizedOSTempDirPath("replica-vagrant-ssh")
+	if err != nil {
+		return "", fmt.Errorf("failed to create a temporary directory for vagrant ssh config file, error: %s", err)
+	}
+	vagrantSSHConfigFilePath := filepath.Join(tmpDirPth, "vagrant.ssh.config")
+
+	cmd := cmdex.NewCommand("vagrant",
+		"ssh-config",
+	).SetDir(vagrantVMDir)
+
+	fmt.Println()
+	log.Printf("$ %s", cmd.PrintableCommandArgs())
+	fmt.Println()
+
+	sshConfigCmdOutput, err := cmd.RunAndReturnTrimmedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to run command, error: %s", err)
+	}
+
+	if err := fileutil.WriteStringToFile(vagrantSSHConfigFilePath, sshConfigCmdOutput); err != nil {
+		return "", fmt.Errorf("failed to write vagrant ssh config into file, error: %s", err)
+	}
+
+	return vagrantSSHConfigFilePath, nil
 }
 
 func createVagrantSnapshot(vagrantVMDir, snapshotID string) error {
@@ -118,7 +188,22 @@ func createVagrantSnapshot(vagrantVMDir, snapshotID string) error {
 	return nil
 }
 
-func createVagrantVM(vagrantVMDirPath string) error {
+func createVagrantVM(vagrantVMDirPath string, isVagrantDestroyBeforeCreate bool) error {
+	if isVagrantDestroyBeforeCreate {
+		{
+			cmd := cmdex.NewCommandWithStandardOuts("vagrant",
+				"destroy", "-f",
+			).SetDir(vagrantVMDirPath)
+
+			fmt.Println()
+			log.Printf("$ %s", cmd.PrintableCommandArgs())
+			fmt.Println()
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("Failed to run command, error: %s", err)
+			}
+		}
+	}
+
 	const vagrantFileContent = `# -*- mode: ruby -*-
 # vi: set ft=ruby :
 
@@ -126,6 +211,13 @@ Vagrant.configure("2") do |config|
   config.vm.box = "bitrise-replica-macos"
   config.vm.synced_folder ".", "/vagrant", :disabled => true
   config.ssh.insert_key = false
+
+  config.vm.provider "virtualbox" do |v|
+    # v.linked_clone = true
+
+    # v.memory = 4096
+    # v.cpus = 2
+  end
 end
 `
 
